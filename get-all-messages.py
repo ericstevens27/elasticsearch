@@ -8,6 +8,7 @@ import sys
 import csv
 import re
 import json
+import ericbase
 
 # regex searches
 re_datetime = r"\[DEBUG\] (.*?)\||\[INFO\] (.*?)\||\[ERROR\] (.*?)\|"
@@ -156,8 +157,10 @@ esquery_base = {
     }
 }
 
+
 iDteFrom = "2017-09-05T16:55:00.000"
 iDteTo = "2017-09-05T17:00:00.000"
+re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
 
 
 def extractgroup(match):
@@ -170,11 +173,6 @@ def extractgroups(match):
     if match is None:
         return None
     return match.groups()
-
-
-def printerror(errmsg):
-    print("[ERROR] {}\n".format(errmsg))
-    sys.exit(2)
 
 
 def processmessage(logmessage, i, ptype, qid):
@@ -258,7 +256,7 @@ def listtodict(somelist, keys):
     klen = len(keys)
     if klen != len(somelist):
         print(somelist, keys)
-        printerror("Key [{}] and list [{}] length mismatch".format(len(keys), len(somelist)))
+        ericbase.printerror("Key [{}] and list [{}] length mismatch".format(len(keys), len(somelist)))
     dout = {}
     for i in range(0, klen):
         dout[keys[i]] = somelist[i]
@@ -310,7 +308,6 @@ def processresults(r, s):
 def processversion(r):
     # convert r to dict
     r_dict = listtodict(r, csv_header)
-    n = {}
     if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
         n = dict(imei=r_dict['imei'], datetime=r_dict['datetime'], date=r_dict['date'], time=r_dict['time'])
         if r_dict['miuiversion-1']:
@@ -349,14 +346,9 @@ def performquery(i, q, p, s, r_count, c_count):
 
 
 usagemsg = "This program reads a reads a json file from the current directory and \n\
-uses the device ID, Mailbox ID and Command Keys to extract messages from Elasticsearch. \n\
-Usage is:\n\
-python " + sys.argv[0] + " [options] where options can be:\n\
-\t--help: print this message\n\
-\t--verbose: print messages\n\
-\t--debug: print debug messages\n\
-\n\
-\n"
+uses the device ID to extract all messages for this device and associated Spaces from Elasticsearch. \n\
+Usage is:\n\n\
+python3 " + sys.argv[0] + " [options] where:"
 
 parser = OptionParser(usagemsg)
 parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False,
@@ -369,7 +361,6 @@ parser.add_option("-m", "--messages", dest="includemessages", action="store_true
                   help="Include full body of message in csv output")
 parser.add_option("-a", "--all", dest="allrecords", action="store_true", default=False,
                   help="record all records in csv. Default is only records with useful data.")
-parser.add_option("-q", "--query", dest="query", action="store_true", help="The query to use in the Elasticsearch call")
 
 (options, args) = parser.parse_args()
 
@@ -383,43 +374,83 @@ if options.debug:
 if options.includemessages:
     csv_header.append('rawmessage')
     if options.verbose:
-        print ("Appending RAW Messages to message records")
+        print("Appending RAW Messages to message records")
 if options.allrecords and options.verbose:
-    print ("Outputing ALL Message records")
+    print("Outputing ALL Message records")
 
-output_file_base = "_messages.csv"
+output_file_base = "_messages_" + dString + ".csv"
 
 myESHost = "http://54.223.134.135:9200"
+iDteFrom = "2017-08-23T20:00:00.000"
+iDteTo = "2017-08-23T20:01:00.000"
 iIndexName = "filebeat*"
 
-es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
-
-if es.indices.exists(iIndexName):
-    if options.verbose:
-        print('Index there - execute queries')
-
-    # open csv file for this query
-    output_file = options.query + output_file_base
-    csv_output = open(output_file, 'w')
-    write_output = csv.writer(csv_output)
-    write_output.writerow(csv_header)
-    record_count = 0
-    csv_count = 0
-    summary = [options.query, 'manual']
-    for elem in summary_blank:
-        summary.append(elem)
-
-    # First look for messages related to the deviceId
-    [summary, record_count, csv_count] = performquery(options.query, options.query, '[manual]', summary,
-                                                      record_count, csv_count)
-
-    csv_output.close()
-    summaryrecords.append(summary)
-    processversiondata(options.query)
-    versionrecords = []
-    print("{}: Processed {} records and wrote {} for IMEI [{}]".format('manual', record_count, csv_count,
-                                                                       options.query))
+if options.test:
+    json_files = ["test_devices_list.json"]
+    print("[WARNING]: Running in Test Mode")
 else:
-    printerror("Indices not found. Check connection.")
+    json_files = ["normal_devices_list.json"]
+
+for f in json_files:
+    json_fh = open(f, "r")
+    data = json.load(json_fh)
+    if options.debug:
+        print(data)
+
+    es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
+
+    if es.indices.exists(iIndexName):
+        if options.verbose:
+            print('Index there - execute queries')
+
+        for record in data:
+            if options.debug:
+                print(record['IMEI'])
+                print(record['deviceId'])
+                for mb in record['mailboxKeys']:
+                    print(mb)
+                for sc in record['spaceCommandKeys']:
+                    print(sc)
+                for dc in record['deviceCommandKeys']:
+                    print(dc)
+
+            # open csv file for this IEMI
+            output_file = record['IMEI'] + output_file_base
+            csv_output = open(output_file, 'w')
+            write_output = csv.writer(csv_output)
+            write_output.writerow(csv_header)
+            record_count = 0
+            csv_count = 0
+            summary = [record['IMEI'], f]
+            for elem in summary_blank:
+                summary.append(elem)
+
+            # First look for messages related to the deviceId
+            [summary, record_count, csv_count] = performquery(record['IMEI'], record['deviceId'], '[device]', summary,
+                                                              record_count, csv_count)
+
+            # Next look for messages related to the mailbox id
+            for el in record['mailboxKeys']:
+                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
+                                                                  record_count, csv_count)
+
+            # Next look for messages related to the space commands
+            for el in record['spaceCommandKeys']:
+                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
+                                                                  record_count, csv_count)
+
+            # Finally look for messages related to the device commands
+            for el in record['deviceCommandKeys']:
+                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
+                                                                  record_count, csv_count)
+
+            csv_output.close()
+            summaryrecords.append(summary)
+            processversiondata(record['IMEI'])
+            versionrecords = []
+            print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, record_count, csv_count,
+                                                                               record['IMEI']))
+    else:
+        ericbase.printerror("Indices not found. Check connection.")
 
 processsummarydata()
