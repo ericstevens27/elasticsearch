@@ -35,9 +35,11 @@ re_imei = r"(\d{15}$)"
 
 # query strings
 qry_AND = " AND "
+qry_OR = " OR "
 qry_DRC = "Device Request Content"
-qry_deviceregistration = "Device with deviceId" + qry_AND + "was created"
-qry_otadevicedata = qry_DRC + qry_AND + "/api/v3/device/devices"
+qry_deviceregistration_1 = "Device with deviceId"
+qry_deviceregistration_2 = "was created"
+qry_otadevicedata = "/api/v3/device/devices"
 qry_subscription = "last subscribed to now"
 qry_lastseendate = "Sent last seen mailbox"
 qry_spaceentrycount = "spaceEntryCount"
@@ -45,9 +47,9 @@ qry_mailboxregistered = "successfully registered"
 qry_recoverspace = "RecoverSpace"
 qry_spacedeleted = "deregistered successfully"
 qry_devicedeleted = "Removed device"
-qry_spaceactivationshared = "/generate" + qry_AND + qry_DRC
-qry_spaceactiviationindividual = "/activate" + qry_AND + qry_DRC
-qry_spaceactivationarchive = "/lateGenerate" + qry_AND + qry_DRC
+qry_spaceactivationshared = "/generate"
+qry_spaceactiviationindividual = "/activate"
+qry_spaceactivationarchive = "/lateGenerate"
 
 search_list = [
     re_ssversion,
@@ -192,6 +194,18 @@ def extractgroups(match):
     return match.groups()
 
 
+def quotequery(qs: str):
+    q = "\"" + qs + "\""
+    return q
+
+
+def createquerystring(devid, qry_type):
+    qs = None
+    if qry_type == "activationshared":
+        qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
+    return qs
+
+
 def processmessage(logmessage, i, ptype, qid):
     sr = [i, ptype, qid]
     # do datetime separate - need to check for which date group was found
@@ -237,7 +251,7 @@ def processmessage(logmessage, i, ptype, qid):
 
 def createquery(qid, frm, to):
     q = esquery_base
-    q["query"]["bool"]["must"][0]["query_string"]['query'] = "\"" + qid + "\""
+    q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
     q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
     q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
     if options.debug:
@@ -340,26 +354,29 @@ def processversion(r):
         return None
 
 
-def performquery(i, d, p, s, r_count, c_count):
-    q = qry_spaceactivationshared + qry_AND + d
-    esquery = createquery(q, iDteFrom, iDteTo)
-    if options.verbose:
-        print(
-            "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
-    res = es.search(index=iIndexName, body=esquery)
-    if options.verbose:
-        print("Found {} records".format(res['hits']['total']))
-    for hit in res['hits']['hits']:
-        r_count += 1
-        (save, results) = processmessage(hit["_source"]["message"], i, p, q)
-        s = processresults(results, s)
-        v = processversion(results)
-        if v is not None:
-            versionrecords.append(processversion(results))
-        if save:
-            write_output.writerow(results)
-            c_count += 1
-        s.append(c_count)
+def performquery(i, dvid, p, s, r_count, c_count):
+    q = createquerystring(dvid, "activationshared")
+    if options.debug:
+        print("Created query string of [{}]".format(q))
+    if q is not None:
+        esquery = createquery(q, iDteFrom, iDteTo)
+        if options.verbose:
+            print(
+                "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
+        res = es.search(index=iIndexName, body=esquery)
+        if options.verbose:
+            print("Found {} records".format(res['hits']['total']))
+        for hit in res['hits']['hits']:
+            r_count += 1
+            (save, results) = processmessage(hit["_source"]["message"], i, p, q)
+            s = processresults(results, s)
+            v = processversion(results)
+            if v is not None:
+                versionrecords.append(processversion(results))
+            if save:
+                write_output.writerow(results)
+                c_count += 1
+            s.append(c_count)
     return s, r_count, c_count
 
 
@@ -458,10 +475,10 @@ for f in json_files:
 
                 csv_output.close()
                 summaryrecords.append(summary)
-                processversiondata(record['IMEI'])
+                processversiondata(imei)
                 versionrecords = []
                 print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, record_count, csv_count,
-                                                                                   record['IMEI']))
+                                                                                   imei))
     else:
         ericbase.printerror("Indices not found. Check connection.")
 
