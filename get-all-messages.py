@@ -31,6 +31,23 @@ re_realip = r"Device Headers:.*?X-Real-IP : (\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3})"
 re_forwardedip = r"Device Headers:.*?X-Forwarded-For : (.*?, .*?) "
 re_subscription = r"Received message via websocket"
 re_datesplit = r"^(.*?) (.*?),"
+re_imei = r"(\d{15}$)"
+
+# query strings
+qry_AND = " AND "
+qry_DRC = "Device Request Content"
+qry_deviceregistration = "Device with deviceId" + qry_AND + "was created"
+qry_otadevicedata = qry_DRC + qry_AND + "/api/v3/device/devices"
+qry_subscription = "last subscribed to now"
+qry_lastseendate = "Sent last seen mailbox"
+qry_spaceentrycount = "spaceEntryCount"
+qry_mailboxregistered = "successfully registered"
+qry_recoverspace = "RecoverSpace"
+qry_spacedeleted = "deregistered successfully"
+qry_devicedeleted = "Removed device"
+qry_spaceactivationshared = "/generate" + qry_AND + qry_DRC
+qry_spaceactiviationindividual = "/activate" + qry_AND + qry_DRC
+qry_spaceactivationarchive = "/lateGenerate" + qry_AND + qry_DRC
 
 search_list = [
     re_ssversion,
@@ -158,8 +175,8 @@ esquery_base = {
 }
 
 
-iDteFrom = "2017-09-05T16:55:00.000"
-iDteTo = "2017-09-05T17:00:00.000"
+iDteFrom = "2017-08-20T00:00:01.000"
+iDteTo = "2017-09-19T23:59:00.000"
 re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
 
 
@@ -323,7 +340,8 @@ def processversion(r):
         return None
 
 
-def performquery(i, q, p, s, r_count, c_count):
+def performquery(i, d, p, s, r_count, c_count):
+    q = qry_spaceactivationshared + qry_AND + d
     esquery = createquery(q, iDteFrom, iDteTo)
     if options.verbose:
         print(
@@ -381,8 +399,6 @@ if options.allrecords and options.verbose:
 output_file_base = "_messages_" + dString + ".csv"
 
 myESHost = "http://54.223.134.135:9200"
-iDteFrom = "2017-08-23T20:00:00.000"
-iDteTo = "2017-08-23T20:01:00.000"
 iIndexName = "filebeat*"
 
 if options.test:
@@ -405,51 +421,47 @@ for f in json_files:
 
         for record in data:
             if options.debug:
-                print(record['IMEI'])
-                print(record['deviceId'])
-                for mb in record['mailboxKeys']:
-                    print(mb)
-                for sc in record['spaceCommandKeys']:
-                    print(sc)
-                for dc in record['deviceCommandKeys']:
-                    print(dc)
+                for did in record['deviceIds']:
+                    print(did)
 
-            # open csv file for this IEMI
-            output_file = record['IMEI'] + output_file_base
-            csv_output = open(output_file, 'w')
-            write_output = csv.writer(csv_output)
-            write_output.writerow(csv_header)
-            record_count = 0
-            csv_count = 0
-            summary = [record['IMEI'], f]
-            for elem in summary_blank:
-                summary.append(elem)
+            for did in record['deviceIds']:
+                # open csv file for this IEMI
+                imei = extractgroup(re.search(re_imei, did))
+                output_file = imei + output_file_base
+                csv_output = open(output_file, 'w')
+                write_output = csv.writer(csv_output)
+                write_output.writerow(csv_header)
+                record_count = 0
+                csv_count = 0
+                summary = [imei, f]
+                for elem in summary_blank:
+                    summary.append(elem)
 
-            # First look for messages related to the deviceId
-            [summary, record_count, csv_count] = performquery(record['IMEI'], record['deviceId'], '[device]', summary,
-                                                              record_count, csv_count)
-
-            # Next look for messages related to the mailbox id
-            for el in record['mailboxKeys']:
-                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
+                # First look for messages related to the deviceId
+                [summary, record_count, csv_count] = performquery(imei, did, '[device]', summary,
                                                                   record_count, csv_count)
 
-            # Next look for messages related to the space commands
-            for el in record['spaceCommandKeys']:
-                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
-                                                                  record_count, csv_count)
+            # # Next look for messages related to the mailbox id
+            # for el in record['mailboxKeys']:
+            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
+            #                                                       record_count, csv_count)
+            #
+            # # Next look for messages related to the space commands
+            # for el in record['spaceCommandKeys']:
+            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
+            #                                                       record_count, csv_count)
+            #
+            # # Finally look for messages related to the device commands
+            # for el in record['deviceCommandKeys']:
+            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
+            #                                                       record_count, csv_count)
 
-            # Finally look for messages related to the device commands
-            for el in record['deviceCommandKeys']:
-                [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
-                                                                  record_count, csv_count)
-
-            csv_output.close()
-            summaryrecords.append(summary)
-            processversiondata(record['IMEI'])
-            versionrecords = []
-            print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, record_count, csv_count,
-                                                                               record['IMEI']))
+                csv_output.close()
+                summaryrecords.append(summary)
+                processversiondata(record['IMEI'])
+                versionrecords = []
+                print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, record_count, csv_count,
+                                                                                   record['IMEI']))
     else:
         ericbase.printerror("Indices not found. Check connection.")
 
