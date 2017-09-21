@@ -199,12 +199,12 @@ def quotequery(qs: str):
     return q
 
 
-def createquerystring(devid, qry_type):
-    qs = None
-    if qry_type == "activationshared":
-        qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
-    return qs
-
+# def createquerystring(devid, qry_type):
+#     qs = None
+#     if qry_type == "activationshared":
+#         qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
+#     return qs
+#
 
 def processmessage(logmessage, i, ptype, qid):
     sr = [i, ptype, qid]
@@ -249,16 +249,16 @@ def processmessage(logmessage, i, ptype, qid):
     return savethisrecord, sr
 
 
-def createquery(qid, frm, to):
-    q = esquery_base
-    q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
-    q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
-    q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
-    if options.debug:
-        print("Check query data: Date from is {}, Date to is {}".format(
-            q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
-            q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
-    return q
+# def createquery(qid, frm, to):
+#     q = esquery_base
+#     q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
+#     q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
+#     q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
+#     if options.debug:
+#         print("Check query data: Date from is {}, Date to is {}".format(
+#             q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
+#             q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
+#     return q
 
 
 def processsummarydata():
@@ -354,30 +354,86 @@ def processversion(r):
         return None
 
 
-def performquery(i, dvid, p, s, r_count, c_count):
-    q = createquerystring(dvid, "activationshared")
-    if options.debug:
-        print("Created query string of [{}]".format(q))
-    if q is not None:
-        esquery = createquery(q, iDteFrom, iDteTo)
-        if options.verbose:
-            print(
-                "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
-        res = es.search(index=iIndexName, body=esquery)
-        if options.verbose:
-            print("Found {} records".format(res['hits']['total']))
-        for hit in res['hits']['hits']:
-            r_count += 1
-            (save, results) = processmessage(hit["_source"]["message"], i, p, q)
-            s = processresults(results, s)
-            v = processversion(results)
-            if v is not None:
-                versionrecords.append(processversion(results))
-            if save:
-                write_output.writerow(results)
-                c_count += 1
-            s.append(c_count)
-    return s, r_count, c_count
+# def performquery(i, dvid, p, s, r_count, c_count):
+#     q = createquerystring(dvid, "activationshared")
+#     if options.debug:
+#         print("Created query string of [{}]".format(q))
+#     if q is not None:
+#         esquery = createquery(q, iDteFrom, iDteTo)
+#         if options.verbose:
+#             print(
+#                 "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
+#         res = es.search(index=iIndexName, body=esquery)
+#         if options.verbose:
+#             print("Found {} records".format(res['hits']['total']))
+#         for hit in res['hits']['hits']:
+#             r_count += 1
+#             (save, results) = processmessage(hit["_source"]["message"], i, p, q)
+#             s = processresults(results, s)
+#             v = processversion(results)
+#             if v is not None:
+#                 versionrecords.append(processversion(results))
+#             if save:
+#                 write_output.writerow(results)
+#                 c_count += 1
+#             s.append(c_count)
+#     return s, r_count, c_count
+
+
+class gsquery:
+    imei = None
+    deviceid = None
+    mailboxid = None
+    incount = 0
+    outcount = 0
+    querystring = ''
+    queryfromdate = "2017-08-20T00:00:01.000"
+    querytodate = "2017-09-19T23:59:00.000"
+
+    def doquery(self, p):
+        if options.debug:
+            print("Using class method doquery")
+        q = self.createquerystring(self.deviceid, "activationshared")
+        if options.debug:
+            print("Created query string of [{}]".format(q))
+        if q is not None:
+            esquery = self.createquery(q, self.queryfromdate, self.querytodate)
+            if options.verbose:
+                print(
+                    "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
+            res = es.search(index=iIndexName, body=esquery)
+            if options.verbose:
+                print("Found {} records".format(res['hits']['total']))
+            for hit in res['hits']['hits']:
+                self.incount += 1
+                (save, results) = processmessage(hit["_source"]["message"], self.imei, p, q)
+                self.summary = processresults(results, self.summary)
+                v = processversion(results)
+                if v is not None:
+                    versionrecords.append(processversion(results))
+                if save:
+                    write_output.writerow(results)
+                    self.outcount += 1
+                self.summary.append(self.outcount)
+        return 0
+
+    def createquery(self, qid, frm, to):
+        q = esquery_base
+        q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
+        q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
+        q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
+        if options.debug:
+            print("Check query data: Date from is {}, Date to is {}".format(
+                q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
+                q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
+        return q
+
+
+    def createquerystring(self, devid, qry_type):
+        qs = None
+        if qry_type == "activationshared":
+            qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
+        return qs
 
 
 usagemsg = "This program reads a reads a json file from the current directory and \n\
@@ -443,20 +499,21 @@ for f in json_files:
 
             for did in record['deviceIds']:
                 # open csv file for this IEMI
-                imei = extractgroup(re.search(re_imei, did))
-                output_file = imei + output_file_base
+                qryobj = gsquery()
+                qryobj.imei = extractgroup(re.search(re_imei, did))
+                qryobj.deviceid = did
+                output_file = qryobj.imei + output_file_base
                 csv_output = open(output_file, 'w')
                 write_output = csv.writer(csv_output)
                 write_output.writerow(csv_header)
-                record_count = 0
-                csv_count = 0
-                summary = [imei, f]
+                qryobj.incount = 0
+                qryobj.outcount = 0
+                qryobj.summary = [qryobj.imei, f]
                 for elem in summary_blank:
-                    summary.append(elem)
+                    qryobj.summary.append(elem)
 
                 # First look for messages related to the deviceId
-                [summary, record_count, csv_count] = performquery(imei, did, '[device]', summary,
-                                                                  record_count, csv_count)
+                qryres = qryobj.doquery('[device]')
 
             # # Next look for messages related to the mailbox id
             # for el in record['mailboxKeys']:
@@ -474,11 +531,11 @@ for f in json_files:
             #                                                       record_count, csv_count)
 
                 csv_output.close()
-                summaryrecords.append(summary)
-                processversiondata(imei)
+                summaryrecords.append(qryobj.summary)
+                processversiondata(qryobj.imei)
                 versionrecords = []
-                print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, record_count, csv_count,
-                                                                                   imei))
+                print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
+                                                                                   qryobj.imei))
     else:
         ericbase.printerror("Indices not found. Check connection.")
 
