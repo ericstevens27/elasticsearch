@@ -194,49 +194,6 @@ def extractgroups(match):
     return match.groups()
 
 
-def processmessage(logmessage, i, ptype, qid):
-    sr = [i, ptype, qid]
-    # do datetime separate - need to check for which date group was found
-    date_list = extractgroups(re.search(re_datetime, logmessage))
-    date_touse = ''
-    for dt in date_list:
-        if dt is None:
-            continue
-        else:
-            date_touse = dt
-    sr.append(date_touse)
-    [de, t] = extractgroups(re.search(re_datesplit, date_touse))
-    sr.append(de)
-    sr.append(t)
-    if re_subscription in logmessage:
-        sr.append(True)
-    else:
-        sr.append(False)
-    for re_element in search_list:
-        sr.append(extractgroup(re.search(re_element, logmessage)))
-    if options.includemessages:
-        sr.append(logmessage)
-    if options.debug:
-        print(sr)
-    savethisrecord = True
-    if not options.allrecords:
-        # check for useful data indices: 7, 10-18, 20, 21
-        savethisrecord = False
-        if sr[7]:
-            savethisrecord = True
-        if not savethisrecord:
-            for i in range(10, 18):
-                if sr[i]:
-                    savethisrecord = True
-                    break
-            if not savethisrecord:
-                for i in range(20, 21):
-                    if sr[i]:
-                        savethisrecord = True
-                        break
-    return savethisrecord, sr
-
-
 def processsummarydata():
     summary_file = "summary_aug.csv"
     sf = open(summary_file, "w")
@@ -270,66 +227,6 @@ def listtodict(somelist, keys):
     return dout
 
 
-def processresults(r, s):
-    # convert r to dict
-    r_dict = listtodict(r, csv_header)
-    # convert s to dict
-    s_dict = listtodict(s, summary_header)
-    n = dict(imei=s_dict['imei'], fromfile=s_dict['fromfile'])
-    n['totalmessages'] = int(s_dict['totalmessages']) + 1
-    if r_dict['subscription']:
-        n["subscriptions"] = int(s_dict['subscriptions']) + 1
-    else:
-        n['subscriptions'] = s_dict['subscriptions']
-    if r_dict['datetime'] < s_dict['firstdatetime'] or s_dict['firstdatetime'] == '':
-        n['firstdatetime'] = r_dict['datetime']
-    else:
-        n['firstdatetime'] = s_dict['firstdatetime']
-    if r_dict['datetime'] > s_dict['lastdatetime'] or s_dict['lastdatetime'] == '':
-        n['lastdatetime'] = r_dict['datetime']
-    else:
-        n['lastdatetime'] = s_dict['lastdatetime']
-    type_dict = {
-        '[device]': 'devicerecords',
-        '[mailbox]': 'mailboxrecords',
-        '[spacecommand]': 'spacecommandrecords',
-        '[devicecommand]': 'devicecommandrecords'
-    }
-    for t in type_dict:
-        if r_dict['type'] == t:
-            n[type_dict[r_dict['type']]] = int(s_dict[type_dict[r_dict['type']]]) + 1
-        else:
-            n[type_dict[t]] = int(s_dict[type_dict[t]])
-    if r_dict['model-1']:
-        n['model'] = r_dict['model-1']
-    elif r_dict['model-2']:
-        n['model'] = r_dict['model-2']
-    else:
-        n['model'] = s_dict['model']
-    n_output = []
-    for k, v in n.items():
-        n_output.append(v)
-    return n_output
-
-
-def processversion(r):
-    # convert r to dict
-    r_dict = listtodict(r, csv_header)
-    if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
-        n = dict(imei=r_dict['imei'], datetime=r_dict['datetime'], date=r_dict['date'], time=r_dict['time'])
-        if r_dict['miuiversion-1']:
-            n['miuiversion'] = r_dict['miuiversion-1']
-        else:
-            n['miuiversion'] = r_dict['miuiversion-2']
-        n['ssversion'] = r_dict['ssversion']
-        n_output = []
-        for k, v in n.items():
-            n_output.append(v)
-        return n_output
-    else:
-        return None
-
-
 class gsquery:
     imei = None
     deviceid = None
@@ -340,6 +237,8 @@ class gsquery:
     queryfromdate = "2017-08-20T00:00:01.000"
     querytodate = "2017-09-19T23:59:00.000"
     queryobject = ''
+    summary = []
+    save = False
 
     def doquery(self, p):
         if options.debug:
@@ -359,13 +258,11 @@ class gsquery:
                 print("Found {} records".format(res['hits']['total']))
             for hit in res['hits']['hits']:
                 self.incount += 1
-                (save, results) = processmessage(hit["_source"]["message"], self.imei, p, self.querystring)
-                self.summary = processresults(results, self.summary)
-                v = processversion(results)
-                if v is not None:
-                    versionrecords.append(processversion(results))
-                if save:
-                    write_output.writerow(results)
+                self.processmessage(hit["_source"]["message"], p)
+                self.processresults()
+                self.processversion()
+                if self.save:
+                    write_output.writerow(self.results)
                     self.outcount += 1
                 self.summary.append(self.outcount)
         return 0
@@ -400,6 +297,105 @@ class gsquery:
             else:
                 qo.append("\"" + q + "\"")
         return ''.join(qo)
+
+
+    def processversion(self):
+        # convert r to dict
+        r_dict = listtodict(self.results, csv_header)
+        if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
+            n = dict(imei=r_dict['imei'], datetime=r_dict['datetime'], date=r_dict['date'], time=r_dict['time'])
+            if r_dict['miuiversion-1']:
+                n['miuiversion'] = r_dict['miuiversion-1']
+            else:
+                n['miuiversion'] = r_dict['miuiversion-2']
+            n['ssversion'] = r_dict['ssversion']
+            n_output = []
+            for k, v in n.items():
+                n_output.append(v)
+            versionrecords.append(n_output)
+
+
+    def processresults(self):
+        # convert self.results to dict
+        r_dict = listtodict(self.results, csv_header)
+        # convert self.summary to dict
+        s_dict = listtodict(self.summary, summary_header)
+        n = dict(imei=s_dict['imei'], fromfile=s_dict['fromfile'])
+        n['totalmessages'] = int(s_dict['totalmessages']) + 1
+        if r_dict['subscription']:
+            n["subscriptions"] = int(s_dict['subscriptions']) + 1
+        else:
+            n['subscriptions'] = s_dict['subscriptions']
+        if r_dict['datetime'] < s_dict['firstdatetime'] or s_dict['firstdatetime'] == '':
+            n['firstdatetime'] = r_dict['datetime']
+        else:
+            n['firstdatetime'] = s_dict['firstdatetime']
+        if r_dict['datetime'] > s_dict['lastdatetime'] or s_dict['lastdatetime'] == '':
+            n['lastdatetime'] = r_dict['datetime']
+        else:
+            n['lastdatetime'] = s_dict['lastdatetime']
+        type_dict = {
+            '[device]': 'devicerecords',
+            '[mailbox]': 'mailboxrecords',
+            '[spacecommand]': 'spacecommandrecords',
+            '[devicecommand]': 'devicecommandrecords'
+        }
+        for t in type_dict:
+            if r_dict['type'] == t:
+                n[type_dict[r_dict['type']]] = int(s_dict[type_dict[r_dict['type']]]) + 1
+            else:
+                n[type_dict[t]] = int(s_dict[type_dict[t]])
+        if r_dict['model-1']:
+            n['model'] = r_dict['model-1']
+        elif r_dict['model-2']:
+            n['model'] = r_dict['model-2']
+        else:
+            n['model'] = s_dict['model']
+        n_output = []
+        for k, v in n.items():
+            n_output.append(v)
+        return n_output
+
+    def processmessage(self, logmessage, ptype):
+        self.results = [self.imei, ptype, self.querystring]
+        # do datetime separate - need to check for which date group was found
+        date_list = extractgroups(re.search(re_datetime, logmessage))
+        date_touse = ''
+        for dt in date_list:
+            if dt is None:
+                continue
+            else:
+                date_touse = dt
+        self.results.append(date_touse)
+        [de, t] = extractgroups(re.search(re_datesplit, date_touse))
+        self.results.append(de)
+        self.results.append(t)
+        if re_subscription in logmessage:
+            self.results.append(True)
+        else:
+            self.results.append(False)
+        for re_element in search_list:
+            self.results.append(extractgroup(re.search(re_element, logmessage)))
+        if options.includemessages:
+            self.results.append(logmessage)
+        if options.debug:
+            print(self.results)
+        self.save = True
+        if not options.allrecords:
+            # check for useful data indices: 7, 10-18, 20, 21
+            self.save = False
+            if self.results[7]:
+                self.save = True
+            if not self.save:
+                for self.imei in range(10, 18):
+                    if self.results[self.imei]:
+                        self.save = True
+                        break
+                if not self.save:
+                    for self.imei in range(20, 21):
+                        if self.results[self.imei]:
+                            self.save = True
+                            break
 
 
 usagemsg = "This program reads a reads a json file from the current directory and \n\
