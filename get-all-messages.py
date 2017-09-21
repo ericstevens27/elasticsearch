@@ -95,16 +95,7 @@ csv_header = [
     "realip",
     "forwardedip"
 ]
-summary_header = [
-    "imei",  # 0
-    "fromfile",  # 1
-    "totalmessages",  # 2
-    "subscriptions",  # 3
-    "firstdatetime",  # 4
-    "lastdatetime",  # 5
-    "model",  # 6
-    "usefulrecords"  # 7
-]
+
 summary_blank = [
     0,
     0,
@@ -113,14 +104,6 @@ summary_blank = [
     "",
     0
 ]
-version_header = [
-    "imei",  # 0
-    "datetime",  # 1
-    "date",  # 2
-    "time",  # 3
-    "miuiversion",  # 4
-    "ssversion"  # 5
-]
 version_blank = [
     "",
     "",
@@ -128,11 +111,6 @@ version_blank = [
     "",
     ""
 ]
-
-record_count = 0
-csv_count = 0
-summaryrecords = []
-versionrecords = []
 
 # create the base query
 esquery_base = {
@@ -167,54 +145,62 @@ esquery_base = {
     }
 }
 
+summary_header = [
+    "imei",  # 0
+    "fromfile",  # 1
+    "totalmessages",  # 2
+    "subscriptions",  # 3
+    "firstdatetime",  # 4
+    "lastdatetime",  # 5
+    "model",  # 6
+    "usefulrecords"  # 7
+]
+version_header = [
+    "imei",  # 0
+    "datetime",  # 1
+    "date",  # 2
+    "time",  # 3
+    "miuiversion",  # 4
+    "ssversion"  # 5
+]
+
 iDteFrom = "2017-08-20T00:00:01.000"
 iDteTo = "2017-09-19T23:59:00.000"
 re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
 
 
-def extractgroup(match):
-    if match is None:
-        return None
-    return match.group(1)
+class ExtractRe:
+
+    @staticmethod
+    def extractgroup(match):
+        if match is None:
+            return None
+        return match.group(1)
+
+    @staticmethod
+    def extractgroups(match):
+        if match is None:
+            return None
+        return match.groups()
 
 
-def extractgroups(match):
-    if match is None:
-        return None
-    return match.groups()
+class ProcessData:
+    outfile = ""
+    outrecords = []
+    headers = []
 
+    def __init__(self, fname, h):
+        self.outfile = fname
+        self.headers = h
 
-def processsummarydata():
-    summary_file = "summary_aug.csv"
-    sf = open(summary_file, "w")
-    write_summary = csv.writer(sf)
-    write_summary.writerow(summary_header)
-    for r in summaryrecords:
-        write_summary.writerow(r)
-    sf.close()
-    return 0
-
-
-def processversiondata(i):
-    version_file = i + "_version_aug.csv"
-    sf = open(version_file, "w")
-    write_summary = csv.writer(sf)
-    write_summary.writerow(version_header)
-    for r in versionrecords:
-        write_summary.writerow(r)
-    sf.close()
-    return 0
-
-
-def listtodict(somelist, keys):
-    klen = len(keys)
-    if klen != len(somelist):
-        print(somelist, keys)
-        ericbase.printerror("Key [{}] and list [{}] length mismatch".format(len(keys), len(somelist)))
-    dout = {}
-    for i in range(0, klen):
-        dout[keys[i]] = somelist[i]
-    return dout
+    def outputdata(self):
+        sf = open(self.outfile, "w")
+        wo = csv.writer(sf)
+        wo.writerow(self.headers)
+        for r in self.outrecords:
+            wo.writerow(r)
+        sf.close()
+        return 0
 
 
 class GsQuery:
@@ -289,7 +275,7 @@ class GsQuery:
 
     def processversion(self):
         # convert r to dict
-        r_dict = listtodict(self.results, csv_header)
+        r_dict = ericbase.listtodict(self.results, csv_header)
         if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
             n = dict(imei=r_dict['imei'], datetime=r_dict['datetime'], date=r_dict['date'], time=r_dict['time'])
             if r_dict['miuiversion-1']:
@@ -300,13 +286,13 @@ class GsQuery:
             n_output = []
             for k, v in n.items():
                 n_output.append(v)
-            versionrecords.append(n_output)
+            versiondata.outrecords.append(n_output)
 
     def processresults(self):
         # convert self.results to dict
-        r_dict = listtodict(self.results, csv_header)
+        r_dict = ericbase.listtodict(self.results, csv_header)
         # convert self.summary to dict
-        s_dict = listtodict(self.summary, summary_header)
+        s_dict = ericbase.listtodict(self.summary, summary_header)
         n = dict(imei=s_dict['imei'], fromfile=s_dict['fromfile'])
         n['totalmessages'] = int(s_dict['totalmessages']) + 1
         if r_dict['subscription']:
@@ -335,7 +321,7 @@ class GsQuery:
     def processmessage(self, logmessage: str):
         self.results = [self.imei, self.querystring]
         # do datetime separate - need to check for which date group was found
-        date_list = extractgroups(re.search(re_datetime, logmessage))
+        date_list = matching.extractgroups(re.search(re_datetime, logmessage))
         date_touse = ''
         for dt in date_list:
             if dt is None:
@@ -343,7 +329,7 @@ class GsQuery:
             else:
                 date_touse = dt
         self.results.append(date_touse)
-        [de, t] = extractgroups(re.search(re_datesplit, date_touse))
+        [de, t] = matching.extractgroups(re.search(re_datesplit, date_touse))
         self.results.append(de)
         self.results.append(t)
         if re_subscription in logmessage:
@@ -351,7 +337,7 @@ class GsQuery:
         else:
             self.results.append(False)
         for re_element in search_list:
-            self.results.append(extractgroup(re.search(re_element, logmessage)))
+            self.results.append(matching.extractgroup(re.search(re_element, logmessage)))
         if options.includemessages:
             self.results.append(logmessage)
         if options.debug:
@@ -418,6 +404,8 @@ if options.test:
 else:
     json_files = ["normal_devices_list.json"]
 
+summarydata = ProcessData("summary.csv", summary_header)
+
 for f in json_files:
     json_fh = open(f, "r")
     data = json.load(json_fh)
@@ -425,6 +413,7 @@ for f in json_files:
         print(data)
 
     es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
+    matching = ExtractRe()
 
     if es.indices.exists(iIndexName):
         if options.verbose:
@@ -436,11 +425,11 @@ for f in json_files:
                     print(did)
 
             for did in record['deviceIds']:
-                # open csv file for this IEMI
                 qryobj = GsQuery()
-                qryobj.imei = extractgroup(re.search(re_imei, did))
+                qryobj.imei = matching.extractgroup(re.search(re_imei, did))
                 qryobj.deviceid = did
                 output_file = qryobj.imei + output_file_base
+                versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
                 csv_output = open(output_file, 'w')
                 write_output = csv.writer(csv_output)
                 write_output.writerow(csv_header)
@@ -469,12 +458,12 @@ for f in json_files:
                 #                                                       record_count, csv_count)
 
                 csv_output.close()
-                summaryrecords.append(qryobj.summary)
-                processversiondata(qryobj.imei)
-                versionrecords = []
+                summarydata.outrecords.append(qryobj.summary)
+                versiondata.outputdata()
+                versiondata.outrecords = []
                 print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
                                                                                    qryobj.imei))
     else:
         ericbase.printerror("Indices not found. Check connection.")
 
-processsummarydata()
+summarydata.outputdata()
