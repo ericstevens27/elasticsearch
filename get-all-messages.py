@@ -194,18 +194,6 @@ def extractgroups(match):
     return match.groups()
 
 
-def quotequery(qs: str):
-    q = "\"" + qs + "\""
-    return q
-
-
-# def createquerystring(devid, qry_type):
-#     qs = None
-#     if qry_type == "activationshared":
-#         qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
-#     return qs
-#
-
 def processmessage(logmessage, i, ptype, qid):
     sr = [i, ptype, qid]
     # do datetime separate - need to check for which date group was found
@@ -247,18 +235,6 @@ def processmessage(logmessage, i, ptype, qid):
                         savethisrecord = True
                         break
     return savethisrecord, sr
-
-
-# def createquery(qid, frm, to):
-#     q = esquery_base
-#     q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
-#     q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
-#     q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
-#     if options.debug:
-#         print("Check query data: Date from is {}, Date to is {}".format(
-#             q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
-#             q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
-#     return q
 
 
 def processsummarydata():
@@ -354,32 +330,6 @@ def processversion(r):
         return None
 
 
-# def performquery(i, dvid, p, s, r_count, c_count):
-#     q = createquerystring(dvid, "activationshared")
-#     if options.debug:
-#         print("Created query string of [{}]".format(q))
-#     if q is not None:
-#         esquery = createquery(q, iDteFrom, iDteTo)
-#         if options.verbose:
-#             print(
-#                 "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
-#         res = es.search(index=iIndexName, body=esquery)
-#         if options.verbose:
-#             print("Found {} records".format(res['hits']['total']))
-#         for hit in res['hits']['hits']:
-#             r_count += 1
-#             (save, results) = processmessage(hit["_source"]["message"], i, p, q)
-#             s = processresults(results, s)
-#             v = processversion(results)
-#             if v is not None:
-#                 versionrecords.append(processversion(results))
-#             if save:
-#                 write_output.writerow(results)
-#                 c_count += 1
-#             s.append(c_count)
-#     return s, r_count, c_count
-
-
 class gsquery:
     imei = None
     deviceid = None
@@ -389,24 +339,27 @@ class gsquery:
     querystring = ''
     queryfromdate = "2017-08-20T00:00:01.000"
     querytodate = "2017-09-19T23:59:00.000"
+    queryobject = ''
 
     def doquery(self, p):
         if options.debug:
             print("Using class method doquery")
-        q = self.createquerystring(self.deviceid, "activationshared")
+        self.createquerystring("activationshared")
         if options.debug:
-            print("Created query string of [{}]".format(q))
-        if q is not None:
-            esquery = self.createquery(q, self.queryfromdate, self.querytodate)
+            print("Created query string of [{}]".format(self.querystring))
+        if len(self.querystring) != 0:
+            self.createquery()
             if options.verbose:
                 print(
-                    "Processing {} [{}]".format(p, esquery["query"]["bool"]["must"][0]["query_string"]['query']))
-            res = es.search(index=iIndexName, body=esquery)
+                    "Processing {} [{}]".format(p, self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+            if options.debug:
+                print(self.queryobject)
+            res = es.search(index=iIndexName, body=self.queryobject)
             if options.verbose:
                 print("Found {} records".format(res['hits']['total']))
             for hit in res['hits']['hits']:
                 self.incount += 1
-                (save, results) = processmessage(hit["_source"]["message"], self.imei, p, q)
+                (save, results) = processmessage(hit["_source"]["message"], self.imei, p, self.querystring)
                 self.summary = processresults(results, self.summary)
                 v = processversion(results)
                 if v is not None:
@@ -417,23 +370,36 @@ class gsquery:
                 self.summary.append(self.outcount)
         return 0
 
-    def createquery(self, qid, frm, to):
-        q = esquery_base
-        q["query"]["bool"]["must"][0]["query_string"]['query'] = qid
-        q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = frm
-        q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = to
+    def createquery(self):
+        self.queryobject = esquery_base
+        self.queryobject["query"]["bool"]["must"][0]["query_string"]['query'] = self.querystring
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = self.queryfromdate
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = self.querytodate
         if options.debug:
             print("Check query data: Date from is {}, Date to is {}".format(
-                q["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
-                q["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
-        return q
+                self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
+                self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
+        return 0
 
 
-    def createquerystring(self, devid, qry_type):
-        qs = None
+    def createquerystring(self, qry_type: str):
+        querylist = []
         if qry_type == "activationshared":
-            qs = quotequery(qry_spaceactivationshared) + qry_AND + quotequery(qry_DRC) + qry_AND + quotequery(devid)
-        return qs
+            querylist = [qry_spaceactivationshared, 'and', qry_DRC, 'and', self.deviceid]
+        self.querystring = self.quotequery(querylist)
+        return 0
+
+
+    def quotequery(self, qs: list):
+        qo = []
+        for q in qs:
+            if q == 'and':
+                qo.append(qry_AND)
+            elif q == 'or':
+                qo.append(qry_OR)
+            else:
+                qo.append("\"" + q + "\"")
+        return ''.join(qo)
 
 
 usagemsg = "This program reads a reads a json file from the current directory and \n\
