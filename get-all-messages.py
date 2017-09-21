@@ -72,7 +72,6 @@ search_list = [
 ]
 csv_header = [
     "imei",
-    "type",
     "query",
     "datetime",
     "date",
@@ -103,22 +102,14 @@ summary_header = [
     "subscriptions",  # 3
     "firstdatetime",  # 4
     "lastdatetime",  # 5
-    "devicerecords",  # 6
-    "mailboxrecords",  # 7
-    "spacecommandrecords",  # 8
-    "devicecommandrecords",  # 9
-    "model",  # 10
-    "usefulrecords"     # 11
+    "model",  # 6
+    "usefulrecords"  # 7
 ]
 summary_blank = [
     0,
     0,
     "",
     "",
-    0,
-    0,
-    0,
-    0,
     "",
     0
 ]
@@ -176,7 +167,6 @@ esquery_base = {
     }
 }
 
-
 iDteFrom = "2017-08-20T00:00:01.000"
 iDteTo = "2017-09-19T23:59:00.000"
 re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
@@ -227,7 +217,7 @@ def listtodict(somelist, keys):
     return dout
 
 
-class gsquery:
+class GsQuery:
     imei = None
     deviceid = None
     mailboxid = None
@@ -239,8 +229,9 @@ class gsquery:
     queryobject = ''
     summary = []
     save = False
+    results = []
 
-    def doquery(self, p):
+    def doquery(self):
         if options.debug:
             print("Using class method doquery")
         self.createquerystring("activationshared")
@@ -249,8 +240,7 @@ class gsquery:
         if len(self.querystring) != 0:
             self.createquery()
             if options.verbose:
-                print(
-                    "Processing {} [{}]".format(p, self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+                print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
             if options.debug:
                 print(self.queryobject)
             res = es.search(index=iIndexName, body=self.queryobject)
@@ -258,7 +248,7 @@ class gsquery:
                 print("Found {} records".format(res['hits']['total']))
             for hit in res['hits']['hits']:
                 self.incount += 1
-                self.processmessage(hit["_source"]["message"], p)
+                self.processmessage(hit["_source"]["message"])
                 self.processresults()
                 self.processversion()
                 if self.save:
@@ -278,7 +268,6 @@ class gsquery:
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
         return 0
 
-
     def createquerystring(self, qry_type: str):
         querylist = []
         if qry_type == "activationshared":
@@ -286,8 +275,8 @@ class gsquery:
         self.querystring = self.quotequery(querylist)
         return 0
 
-
-    def quotequery(self, qs: list):
+    @staticmethod
+    def quotequery(qs: list):
         qo = []
         for q in qs:
             if q == 'and':
@@ -297,7 +286,6 @@ class gsquery:
             else:
                 qo.append("\"" + q + "\"")
         return ''.join(qo)
-
 
     def processversion(self):
         # convert r to dict
@@ -313,7 +301,6 @@ class gsquery:
             for k, v in n.items():
                 n_output.append(v)
             versionrecords.append(n_output)
-
 
     def processresults(self):
         # convert self.results to dict
@@ -334,17 +321,6 @@ class gsquery:
             n['lastdatetime'] = r_dict['datetime']
         else:
             n['lastdatetime'] = s_dict['lastdatetime']
-        type_dict = {
-            '[device]': 'devicerecords',
-            '[mailbox]': 'mailboxrecords',
-            '[spacecommand]': 'spacecommandrecords',
-            '[devicecommand]': 'devicecommandrecords'
-        }
-        for t in type_dict:
-            if r_dict['type'] == t:
-                n[type_dict[r_dict['type']]] = int(s_dict[type_dict[r_dict['type']]]) + 1
-            else:
-                n[type_dict[t]] = int(s_dict[type_dict[t]])
         if r_dict['model-1']:
             n['model'] = r_dict['model-1']
         elif r_dict['model-2']:
@@ -354,10 +330,10 @@ class gsquery:
         n_output = []
         for k, v in n.items():
             n_output.append(v)
-        return n_output
+        self.summary = n_output
 
-    def processmessage(self, logmessage, ptype):
-        self.results = [self.imei, ptype, self.querystring]
+    def processmessage(self, logmessage: str):
+        self.results = [self.imei, self.querystring]
         # do datetime separate - need to check for which date group was found
         date_list = extractgroups(re.search(re_datetime, logmessage))
         date_touse = ''
@@ -461,7 +437,7 @@ for f in json_files:
 
             for did in record['deviceIds']:
                 # open csv file for this IEMI
-                qryobj = gsquery()
+                qryobj = GsQuery()
                 qryobj.imei = extractgroup(re.search(re_imei, did))
                 qryobj.deviceid = did
                 output_file = qryobj.imei + output_file_base
@@ -475,22 +451,22 @@ for f in json_files:
                     qryobj.summary.append(elem)
 
                 # First look for messages related to the deviceId
-                qryres = qryobj.doquery('[device]')
+                qryres = qryobj.doquery()
 
-            # # Next look for messages related to the mailbox id
-            # for el in record['mailboxKeys']:
-            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
-            #                                                       record_count, csv_count)
-            #
-            # # Next look for messages related to the space commands
-            # for el in record['spaceCommandKeys']:
-            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
-            #                                                       record_count, csv_count)
-            #
-            # # Finally look for messages related to the device commands
-            # for el in record['deviceCommandKeys']:
-            #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
-            #                                                       record_count, csv_count)
+                # # Next look for messages related to the mailbox id
+                # for el in record['mailboxKeys']:
+                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
+                #                                                       record_count, csv_count)
+                #
+                # # Next look for messages related to the space commands
+                # for el in record['spaceCommandKeys']:
+                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
+                #                                                       record_count, csv_count)
+                #
+                # # Finally look for messages related to the device commands
+                # for el in record['deviceCommandKeys']:
+                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
+                #                                                       record_count, csv_count)
 
                 csv_output.close()
                 summaryrecords.append(qryobj.summary)
