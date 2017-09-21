@@ -48,7 +48,7 @@ qry_recoverspace = "RecoverSpace"
 qry_spacedeleted = "deregistered successfully"
 qry_devicedeleted = "Removed device"
 qry_spaceactivationshared = "/generate"
-qry_spaceactiviationindividual = "/activate"
+qry_spaceactivationindividual = "/activate"
 qry_spaceactivationarchive = "/lateGenerate"
 
 search_list = [
@@ -185,13 +185,11 @@ class ExtractRe:
 
 
 class ProcessData:
-    outfile = ""
-    outrecords = []
-    headers = []
 
     def __init__(self, fname, h):
         self.outfile = fname
         self.headers = h
+        self.outrecords = []
 
     def outputdata(self):
         sf = open(self.outfile, "w")
@@ -216,31 +214,74 @@ class GsQuery:
     summary = []
     save = False
     results = []
+    devicemessages = {
+        "activationshared":[qry_spaceactivationshared, 'and', qry_DRC, 'and'],
+        "activationindividual":[qry_spaceactivationindividual, 'and', qry_DRC, 'and'],
+        "activationarchive":[qry_spaceactivationarchive, 'and', qry_DRC, 'and'],
+        "deviceregistration":[qry_deviceregistration_1, 'and', qry_deviceregistration_2, 'and'],
+        "devicedata":[qry_otadevicedata, 'and', qry_DRC, 'and'],
+        "devicedeleted":[qry_devicedeleted, 'and', qry_DRC, 'and']
+    }
+    mailboxmessages = {
+        "subscription":[qry_subscription, 'and'],
+        "lastseen":[qry_lastseendate, 'and'],
+        "spaceentry":[qry_spaceentrycount, 'and'],
+        "mailboxregistered":[qry_mailboxregistered, 'and'],
+        "recoverspace":[qry_recoverspace, 'and'],
+        "spacedeleted":[qry_spacedeleted, 'and']
+    }
+
 
     def doquery(self):
         if options.debug:
             print("Using class method doquery")
-        self.createquerystring("activationshared")
-        if options.debug:
-            print("Created query string of [{}]".format(self.querystring))
-        if len(self.querystring) != 0:
-            self.createquery()
-            if options.verbose:
-                print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+
+        for k, v in self.devicemessages.items():
+            self.createquerystring(v)
             if options.debug:
-                print(self.queryobject)
-            res = es.search(index=iIndexName, body=self.queryobject)
-            if options.verbose:
-                print("Found {} records".format(res['hits']['total']))
-            for hit in res['hits']['hits']:
-                self.incount += 1
-                self.processmessage(hit["_source"]["message"])
-                self.processresults()
-                self.processversion()
-                if self.save:
-                    write_output.writerow(self.results)
-                    self.outcount += 1
-                self.summary.append(self.outcount)
+                print("Created query string of [{}]".format(self.querystring))
+            if len(self.querystring) != 0:
+                self.createquery()
+                if options.verbose:
+                    print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+                if options.debug:
+                    print(self.queryobject)
+                res = es.search(index=iIndexName, body=self.queryobject)
+                if options.verbose:
+                    print("Found {} records".format(res['hits']['total']))
+                for hit in res['hits']['hits']:
+                    self.incount += 1
+                    self.processmessage(hit["_source"]["message"])
+                    self.processresults()
+                    self.processversion()
+                    if self.save:
+                        write_output.writerow(self.results)
+                        self.outcount += 1
+                    self.summary.append(self.outcount)
+        for k, v in self.mailboxmessages.items():
+            self.createquerystring(v)
+            if options.debug:
+                print("Created query string of [{}]".format(self.querystring))
+            if len(self.querystring) != 0:
+                self.createquery()
+                if options.verbose:
+                    print("Processing {}".format(
+                        self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+                if options.debug:
+                    print(self.queryobject)
+                res = es.search(index=iIndexName, body=self.queryobject)
+                if options.verbose:
+                    print("Found {} records".format(res['hits']['total']))
+                for hit in res['hits']['hits']:
+                    self.incount += 1
+                    self.processmessage(hit["_source"]["message"])
+                    self.processresults()
+                    self.processversion()
+                    if self.save:
+                        write_output.writerow(self.results)
+                        self.outcount += 1
+                    self.summary.append(self.outcount)
+
         return 0
 
     def createquery(self):
@@ -254,11 +295,9 @@ class GsQuery:
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
         return 0
 
-    def createquerystring(self, qry_type: str):
-        querylist = []
-        if qry_type == "activationshared":
-            querylist = [qry_spaceactivationshared, 'and', qry_DRC, 'and', self.deviceid]
-        self.querystring = self.quotequery(querylist)
+    def createquerystring(self, qry_list: list):
+        ql = qry_list + [self.deviceid]
+        self.querystring = self.quotequery(ql)
         return 0
 
     @staticmethod
@@ -349,13 +388,13 @@ class GsQuery:
             if self.results[7]:
                 self.save = True
             if not self.save:
-                for self.imei in range(10, 18):
-                    if self.results[self.imei]:
+                for i in range(10, 18):
+                    if self.results[i]:
                         self.save = True
                         break
                 if not self.save:
-                    for self.imei in range(20, 21):
-                        if self.results[self.imei]:
+                    for i in range(20, 21):
+                        if self.results[i]:
                             self.save = True
                             break
 
