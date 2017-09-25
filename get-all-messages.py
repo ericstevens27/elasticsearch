@@ -29,9 +29,11 @@ re_country = r"GEOIP_COUNTRY_NAME : (.*?)\s*GEOIP"
 re_city = r"GEOIP_CITY : (.*?)\s*User"
 re_realip = r"Device Headers:.*?X-Real-IP : (\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3})"
 re_forwardedip = r"Device Headers:.*?X-Forwarded-For : (.*?, .*?) "
-re_subscription = r"Received message via websocket"
+re_subscription = r"last subscribed to now"
 re_datesplit = r"^(.*?) (.*?),"
 re_imei = r"(\d{15}$)"
+re_spaceentrycount = r"spaceEntryCount\":(\d*)}"
+re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
 
 # query strings
 qry_AND = " AND "
@@ -68,7 +70,8 @@ search_list = [
     re_country,
     re_city,
     re_realip,
-    re_forwardedip
+    re_forwardedip,
+    re_spaceentrycount
 ]
 csv_header = [
     "imei",
@@ -93,7 +96,8 @@ csv_header = [
     "country",
     "city",
     "realip",
-    "forwardedip"
+    "forwardedip",
+    "spaceentrycount"
 ]
 
 summary_blank = [
@@ -164,28 +168,26 @@ version_header = [
     "ssversion"  # 5
 ]
 
-iDteFrom = "2017-08-20T00:00:01.000"
-iDteTo = "2017-09-19T23:59:00.000"
-re_datecheck = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}"
-
 
 class ExtractRe:
-
+    '''Class for the regex extraction methods'''
     @staticmethod
     def extractgroup(match):
+        '''extract the second group (index: 1) from the match object'''
         if match is None:
             return None
         return match.group(1)
 
     @staticmethod
     def extractgroups(match):
+        '''extract all of the matching groups from the regex object'''
         if match is None:
             return None
         return match.groups()
 
 
 class ProcessData:
-
+    '''write a list of lists into a csv file'''
     def __init__(self, fname, h):
         self.outfile = fname
         self.headers = h
@@ -201,107 +203,92 @@ class ProcessData:
         return 0
 
 
-class GsQuery:
-    imei = None
-    deviceid = None
-    mailboxid = None
-    incount = 0
-    outcount = 0
-    querystring = ''
-    queryfromdate = "2017-08-20T00:00:01.000"
-    querytodate = "2017-09-19T23:59:00.000"
-    queryobject = ''
-    summary = []
-    save = False
-    results = []
-    devicemessages = {
-        "activationshared":[qry_spaceactivationshared, 'and', qry_DRC, 'and'],
-        "activationindividual":[qry_spaceactivationindividual, 'and', qry_DRC, 'and'],
-        "activationarchive":[qry_spaceactivationarchive, 'and', qry_DRC, 'and'],
-        "deviceregistration":[qry_deviceregistration_1, 'and', qry_deviceregistration_2, 'and'],
-        "devicedata":[qry_otadevicedata, 'and', qry_DRC, 'and'],
-        "devicedeleted":[qry_devicedeleted, 'and', qry_DRC, 'and']
-    }
-    mailboxmessages = {
-        "subscription":[qry_subscription, 'and'],
-        "lastseen":[qry_lastseendate, 'and'],
-        "spaceentry":[qry_spaceentrycount, 'and'],
-        "mailboxregistered":[qry_mailboxregistered, 'and'],
-        "recoverspace":[qry_recoverspace, 'and'],
-        "spacedeleted":[qry_spacedeleted, 'and']
-    }
+FROM_DATE = "2017-08-20T00:00:01.000"
+TO_DATE = "2017-09-19T23:59:00.000"
+DEVICE_MESSAGES = {
+    "activationshared": [qry_spaceactivationshared, 'and', qry_DRC, 'and'],
+    "activationindividual": [qry_spaceactivationindividual, 'and', qry_DRC, 'and'],
+    "activationarchive": [qry_spaceactivationarchive, 'and', qry_DRC, 'and'],
+    "deviceregistration": [qry_deviceregistration_1, 'and', qry_deviceregistration_2, 'and'],
+    "devicedata": [qry_otadevicedata, 'and', qry_DRC, 'and'],
+    "devicedeleted": [qry_devicedeleted, 'and', qry_DRC, 'and']
+}
+MAILBOX_MESSAGES = {
+    "subscription": [qry_subscription, 'and'],
+    "lastseen": [qry_lastseendate, 'and'],
+    "spaceentry": [qry_spaceentrycount, 'and'],
+    "mailboxregistered": [qry_mailboxregistered, 'and'],
+    "recoverspace": [qry_recoverspace, 'and'],
+    "spacedeleted": [qry_spacedeleted, 'and']
+}
 
+
+class GsQuery:
+    '''all of the query related processing and method'''
+    def __init__(self):
+        self.imei = None
+        self.deviceid = None
+        self.mailboxid = []
+        self.incount = 0
+        self.outcount = 0
+        self.querystring = ''
+        self.queryobject = ''
+        self.summary = []
+        self.save = False
+        self.results = []
 
     def doquery(self):
+        '''main query loop for all device messages and mailbox messages for the device id'''
+        for k, v in DEVICE_MESSAGES.items():
+            self.processquery(v, self.deviceid)
+        if self.mailboxid:
+            for mb in self.mailboxid:
+                for k, v in MAILBOX_MESSAGES.items():
+                    self.processquery(v, mb)
+
+    def processquery(self, qrymsg, idtoprocess):
+        '''form and execute the query, then process the results'''
+        self.createquerystring(qrymsg, idtoprocess)
         if options.debug:
-            print("Using class method doquery")
-
-        for k, v in self.devicemessages.items():
-            self.createquerystring(v)
+            print("Created query string of [{}]".format(self.querystring))
+        if len(self.querystring) != 0:
+            self.createquery()
+            if options.verbose:
+                print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
             if options.debug:
-                print("Created query string of [{}]".format(self.querystring))
-            if len(self.querystring) != 0:
-                self.createquery()
-                if options.verbose:
-                    print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
-                if options.debug:
-                    print(self.queryobject)
-                res = es.search(index=iIndexName, body=self.queryobject)
-                if options.verbose:
-                    print("Found {} records".format(res['hits']['total']))
-                for hit in res['hits']['hits']:
-                    self.incount += 1
-                    self.processmessage(hit["_source"]["message"])
-                    self.processresults()
-                    self.processversion()
-                    if self.save:
-                        write_output.writerow(self.results)
-                        self.outcount += 1
-                    self.summary.append(self.outcount)
-        for k, v in self.mailboxmessages.items():
-            self.createquerystring(v)
-            if options.debug:
-                print("Created query string of [{}]".format(self.querystring))
-            if len(self.querystring) != 0:
-                self.createquery()
-                if options.verbose:
-                    print("Processing {}".format(
-                        self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
-                if options.debug:
-                    print(self.queryobject)
-                res = es.search(index=iIndexName, body=self.queryobject)
-                if options.verbose:
-                    print("Found {} records".format(res['hits']['total']))
-                for hit in res['hits']['hits']:
-                    self.incount += 1
-                    self.processmessage(hit["_source"]["message"])
-                    self.processresults()
-                    self.processversion()
-                    if self.save:
-                        write_output.writerow(self.results)
-                        self.outcount += 1
-                    self.summary.append(self.outcount)
-
-        return 0
+                print(self.queryobject)
+            res = es.search(index=iIndexName, body=self.queryobject)
+            if options.verbose:
+                print("Found {} records".format(res['hits']['total']))
+            for hit in res['hits']['hits']:
+                self.incount += 1
+                self.processmessage(hit["_source"]["message"])
+                self.processresults()
+                self.processversion()
+                if self.save:
+                    write_output.writerow(self.results)
+                    self.outcount += 1
+                self.summary.append(self.outcount)
 
     def createquery(self):
+        '''create the query from the string'''
         self.queryobject = esquery_base
         self.queryobject["query"]["bool"]["must"][0]["query_string"]['query'] = self.querystring
-        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = self.queryfromdate
-        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = self.querytodate
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = FROM_DATE
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = TO_DATE
         if options.debug:
             print("Check query data: Date from is {}, Date to is {}".format(
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
-        return 0
 
-    def createquerystring(self, qry_list: list):
-        ql = qry_list + [self.deviceid]
+    def createquerystring(self, qry_list: list, useid: str):
+        '''create the correct query string from the list of query items'''
+        ql = qry_list + [useid]
         self.querystring = self.quotequery(ql)
-        return 0
 
     @staticmethod
     def quotequery(qs: list):
+        '''surround query items with quotes except for AND and OR'''
         qo = []
         for q in qs:
             if q == 'and':
@@ -313,6 +300,7 @@ class GsQuery:
         return ''.join(qo)
 
     def processversion(self):
+        '''extract and save the version data'''
         # convert r to dict
         r_dict = ericbase.listtodict(self.results, csv_header)
         if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
@@ -328,6 +316,7 @@ class GsQuery:
             versiondata.outrecords.append(n_output)
 
     def processresults(self):
+        '''process the results into the summary record'''
         # convert self.results to dict
         r_dict = ericbase.listtodict(self.results, csv_header)
         # convert self.summary to dict
@@ -358,6 +347,7 @@ class GsQuery:
         self.summary = n_output
 
     def processmessage(self, logmessage: str):
+        '''process the message using the regex strings to extract the useful data'''
         self.results = [self.imei, self.querystring]
         # do datetime separate - need to check for which date group was found
         date_list = matching.extractgroups(re.search(re_datetime, logmessage))
@@ -381,6 +371,13 @@ class GsQuery:
             self.results.append(logmessage)
         if options.debug:
             print(self.results)
+
+        if self.results[7] is not None:
+            if not self.mailboxid:
+                self.mailboxid = [self.results[7]]
+            elif self.results[7] not in self.mailboxid:
+                self.mailboxid.append(self.results[7])
+
         self.save = True
         if not options.allrecords:
             # check for useful data indices: 7, 10-18, 20, 21
@@ -478,23 +475,7 @@ for f in json_files:
                 for elem in summary_blank:
                     qryobj.summary.append(elem)
 
-                # First look for messages related to the deviceId
-                qryres = qryobj.doquery()
-
-                # # Next look for messages related to the mailbox id
-                # for el in record['mailboxKeys']:
-                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[mailbox]', summary,
-                #                                                       record_count, csv_count)
-                #
-                # # Next look for messages related to the space commands
-                # for el in record['spaceCommandKeys']:
-                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[spacecommand]', summary,
-                #                                                       record_count, csv_count)
-                #
-                # # Finally look for messages related to the device commands
-                # for el in record['deviceCommandKeys']:
-                #     [summary, record_count, csv_count] = performquery(record['IMEI'], el, '[devicecommand]', summary,
-                #                                                       record_count, csv_count)
+                qryobj.doquery()
 
                 csv_output.close()
                 summarydata.outrecords.append(qryobj.summary)
