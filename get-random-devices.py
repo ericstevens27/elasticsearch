@@ -173,6 +173,7 @@ version_header = [
 
 class ExtractRe:
     '''Class for the regex extraction methods'''
+
     @staticmethod
     def extractgroup(match):
         '''extract the second group (index: 1) from the match object'''
@@ -190,6 +191,7 @@ class ExtractRe:
 
 class ProcessData:
     '''write a list of lists into a csv file'''
+
     def __init__(self, fname, h):
         self.outfile = fname
         self.headers = h
@@ -204,13 +206,13 @@ class ProcessData:
         sf.close()
         return 0
 
+
 FROM_DATE = "2017-08-01T00:00:01"
-TO_DATE = "2017-09-25T23:59:00"
+TO_DATE = "2017-08-15T23:59:00"
 DT_FORMAT = '%Y-%m-%dT%H:%M:%S'
 HOUR = 3600
-
 DEVICE_MESSAGES = {
-    "activationshared": [qry_spaceactivationshared, 'and', qry_DRC, 'and'],
+    "activationshared": [qry_spaceactivationshared, 'and', qry_DRC],
     "activationindividual": [qry_spaceactivationindividual, 'and', qry_DRC, 'and'],
     "activationarchive": [qry_spaceactivationarchive, 'and', qry_DRC, 'and'],
     "deviceregistration": [qry_deviceregistration_1, 'and', qry_deviceregistration_2, 'and'],
@@ -229,36 +231,25 @@ MAILBOX_MESSAGES = {
 
 class GsQuery:
     '''all of the query related processing and method'''
+
     def __init__(self):
-        self.imei = None
-        self.deviceid = None
-        self.mailboxid = []
         self.incount = 0
         self.outcount = 0
         self.querystring = ''
         self.queryobject = ''
-        self.summary = []
-        self.save = False
+        self.startdate = FROM_DATE
+        self.enddate = TO_DATE
         self.results = []
 
-    def doquery(self):
-        '''main query loop for all device messages and mailbox messages for the device id'''
-        for k, v in DEVICE_MESSAGES.items():
-            self.processquery(v, self.deviceid)
-        if self.mailboxid:
-            for mb in self.mailboxid:
-                for k, v in MAILBOX_MESSAGES.items():
-                    self.processquery(v, mb)
-
-    def processquery(self, qrymsg, idtoprocess):
+    def processquery(self):
         '''form and execute the query, then process the results'''
-        self.createquerystring(qrymsg, idtoprocess)
+        self.createquerystring(DEVICE_MESSAGES['activationshared'])
         if options.debug:
             print("Created query string of [{}]".format(self.querystring))
         if len(self.querystring) != 0:
             self.createquery()
             if options.verbose:
-                print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+                print("Processing {}".format(self.querystring))
             if options.debug:
                 print(self.queryobject)
             res = es.search(index=iIndexName, body=self.queryobject)
@@ -267,27 +258,21 @@ class GsQuery:
             for hit in res['hits']['hits']:
                 self.incount += 1
                 self.processmessage(hit["_source"]["message"])
-                self.processresults()
-                self.processversion()
-                if self.save:
-                    write_output.writerow(self.results)
-                    self.outcount += 1
-                self.summary.append(self.outcount)
 
     def createquery(self):
         '''create the query from the string'''
         self.queryobject = esquery_base
         self.queryobject["query"]["bool"]["must"][0]["query_string"]['query'] = self.querystring
-        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = FROM_DATE
-        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = TO_DATE
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = self.startdate
+        self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = self.enddate
         if options.debug:
             print("Check query data: Date from is {}, Date to is {}".format(
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
 
-    def createquerystring(self, qry_list: list, useid: str):
+    def createquerystring(self, qry_list: list):
         '''create the correct query string from the list of query items'''
-        ql = qry_list + [useid]
+        ql = qry_list
         self.querystring = self.quotequery(ql)
 
     @staticmethod
@@ -303,104 +288,31 @@ class GsQuery:
                 qo.append("\"" + q + "\"")
         return ''.join(qo)
 
-    def processversion(self):
-        '''extract and save the version data'''
-        # convert r to dict
-        r_dict = ericbase.listtodict(self.results, csv_header)
-        if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
-            n = dict(imei=r_dict['imei'], datetime=r_dict['datetime'], date=r_dict['date'], time=r_dict['time'])
-            if r_dict['miuiversion-1']:
-                n['miuiversion'] = r_dict['miuiversion-1']
-            else:
-                n['miuiversion'] = r_dict['miuiversion-2']
-            n['ssversion'] = r_dict['ssversion']
-            n_output = []
-            for k, v in n.items():
-                n_output.append(v)
-            versiondata.outrecords.append(n_output)
-
-    def processresults(self):
-        '''process the results into the summary record'''
-        # convert self.results to dict
-        r_dict = ericbase.listtodict(self.results, csv_header)
-        # convert self.summary to dict
-        s_dict = ericbase.listtodict(self.summary, summary_header)
-        n = dict(imei=s_dict['imei'], fromfile=s_dict['fromfile'])
-        n['totalmessages'] = int(s_dict['totalmessages']) + 1
-        if r_dict['subscription']:
-            n["subscriptions"] = int(s_dict['subscriptions']) + 1
-        else:
-            n['subscriptions'] = s_dict['subscriptions']
-        if r_dict['datetime'] < s_dict['firstdatetime'] or s_dict['firstdatetime'] == '':
-            n['firstdatetime'] = r_dict['datetime']
-        else:
-            n['firstdatetime'] = s_dict['firstdatetime']
-        if r_dict['datetime'] > s_dict['lastdatetime'] or s_dict['lastdatetime'] == '':
-            n['lastdatetime'] = r_dict['datetime']
-        else:
-            n['lastdatetime'] = s_dict['lastdatetime']
-        if r_dict['model-1']:
-            n['model'] = r_dict['model-1']
-        elif r_dict['model-2']:
-            n['model'] = r_dict['model-2']
-        else:
-            n['model'] = s_dict['model']
-        n_output = []
-        for k, v in n.items():
-            n_output.append(v)
-        self.summary = n_output
-
     def processmessage(self, logmessage: str):
         '''process the message using the regex strings to extract the useful data'''
-        self.results = [self.imei, self.querystring]
-        # do datetime separate - need to check for which date group was found
-        date_list = matching.extractgroups(re.search(re_datetime, logmessage))
-        date_touse = ''
-        for dt in date_list:
-            if dt is None:
-                continue
-            else:
-                date_touse = dt
-        self.results.append(date_touse)
-        [de, t] = matching.extractgroups(re.search(re_datesplit, date_touse))
-        self.results.append(de)
-        self.results.append(t)
-        if re_subscription in logmessage:
-            self.results.append(True)
-        else:
-            self.results.append(False)
-        for re_element in search_list:
-            self.results.append(matching.extractgroup(re.search(re_element, logmessage)))
-        if options.includemessages:
-            self.results.append(logmessage)
+        self.results.append(matching.extractgroup(re.search(re_deviceid, logmessage)))
+
+
+def GetStartEndDates():
+    if options.test:
+        qry_start_str = "2017-08-01T17:00:00"
+        qry_end_str = "2017-08-01T17:01:00"
         if options.debug:
-            print(self.results)
+            print("Using TEST query window of {} to {}".format(qry_start_str, qry_end_str))
+    else:
+        qry_start = random.randint(dt.datetime.timestamp(dt.datetime.strptime(FROM_DATE, DT_FORMAT)),
+                                   dt.datetime.timestamp(dt.datetime.strptime(TO_DATE, DT_FORMAT)))
+        qry_end = qry_start + HOUR
+        qry_start_str = dt.datetime.fromtimestamp(qry_start).strftime(DT_FORMAT)
+        qry_end_str = dt.datetime.fromtimestamp(qry_end).strftime(DT_FORMAT)
+        if options.debug:
+            print("Using time window of: {} to {}".format(FROM_DATE, TO_DATE))
+            print("Generated query window of {} to {}".format(qry_start_str, qry_end_str))
+    return qry_start_str, qry_end_str
 
-        if self.results[7] is not None:
-            if not self.mailboxid:
-                self.mailboxid = [self.results[7]]
-            elif self.results[7] not in self.mailboxid:
-                self.mailboxid.append(self.results[7])
 
-        self.save = True
-        if not options.allrecords:
-            # check for useful data indices: 7, 10-18, 20, 21
-            self.save = False
-            if self.results[7]:
-                self.save = True
-            if not self.save:
-                for i in range(10, 18):
-                    if self.results[i]:
-                        self.save = True
-                        break
-                if not self.save:
-                    for i in range(20, 21):
-                        if self.results[i]:
-                            self.save = True
-                            break
-
-usagemsg = "This program reads a json file from the current directory and \n\
-uses the device ID to extract all messages for this device and associated Spaces from Elasticsearch. \n\
+usagemsg = "This program generates a random time period - one hour long, between two dates, then finds all 'generate'\n\
+ messages in Elasticsearch during that time window. All found device ids are extracted and saved to a JSON file.\n\
 Usage is:\n\n\
 python3 " + sys.argv[0] + " [options] where:"
 
@@ -411,11 +323,7 @@ parser.add_option("-d", "--debug", dest="debug", action="store_true", default=Fa
                   help="Print out debug messages during processing")
 parser.add_option("-t", "--test", dest="test", action="store_true", default=False,
                   help="Use test file instead of full file list")
-parser.add_option("-m", "--messages", dest="includemessages", action="store_true", default=False,
-                  help="Include full body of message in csv output")
-parser.add_option("-a", "--all", dest="allrecords", action="store_true", default=False,
-                  help="record all records in csv. Default is only records with useful data.")
-parser.add_option("-i", "--input", dest="inputfile", action="store", help="JSON file with list of Device IDs")
+
 (options, args) = parser.parse_args()
 
 # required options checks
@@ -425,72 +333,38 @@ d = datetime.datetime.now()
 dString = d.strftime("%y%m%d%H%M")
 if options.debug:
     options.verbose = True
-if options.includemessages:
-    csv_header.append('rawmessage')
-    if options.verbose:
-        print("Appending RAW Messages to message records")
-if options.allrecords and options.verbose:
-    print("Outputing ALL Message records")
 
-output_file_base = "_messages_" + dString + ".csv"
+output_file_base = "devices" + dString + ".json"
 
 myESHost = "http://54.223.134.135:9200"
 iIndexName = "filebeat*"
 
 if options.test:
-    json_files = ["test_devices_list.json"]
     print("[WARNING]: Running in Test Mode")
-elif options .inputfile:
-    json_files = [options.inputfile]
-else:
-    json_files = ["normal_devices_list.json"]
 
-summarydata = ProcessData("summary.csv", summary_header)
+es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
+matching = ExtractRe()
 
-for f in json_files:
-    json_fh = open(f, "r")
-    data = json.load(json_fh)
+if es.indices.exists(iIndexName):
+    if options.verbose:
+        print('Index there - execute queries')
+
+    qryobj = GsQuery()
+    qryobj.incount = 0
+    qryobj.outcount = 0
+    (qryobj.startdate, qryobj.enddate) = GetStartEndDates()
+
+    qryobj.processquery()
+
+    print("Processed {} records for date range [{} to {}]".format(qryobj.incount,
+                                                                  qryobj.startdate, qryobj.enddate))
     if options.debug:
-        print(data)
+        print("Devices found:")
+        for dev in qryobj.results:
+            print(dev)
 
-    es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
-    matching = ExtractRe()
-
-    if es.indices.exists(iIndexName):
-        if options.verbose:
-            print('Index there - execute queries')
-
-        for record in data:
-            if not record['deviceIds']:
-                ericbase.printerror("Malformed JSON input file")
-            if options.debug:
-                for did in record['deviceIds']:
-                    print(did)
-
-            for did in record['deviceIds']:
-                qryobj = GsQuery()
-                qryobj.imei = matching.extractgroup(re.search(re_imei, did))
-                qryobj.deviceid = did
-                output_file = qryobj.imei + output_file_base
-                versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
-                csv_output = open(output_file, 'w')
-                write_output = csv.writer(csv_output)
-                write_output.writerow(csv_header)
-                qryobj.incount = 0
-                qryobj.outcount = 0
-                qryobj.summary = [qryobj.imei, f]
-                for elem in summary_blank:
-                    qryobj.summary.append(elem)
-
-                qryobj.doquery()
-
-                csv_output.close()
-                summarydata.outrecords.append(qryobj.summary)
-                versiondata.outputdata()
-                versiondata.outrecords = []
-                print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
-                                                                                   qryobj.imei))
-    else:
-        ericbase.printerror("Indices not found. Check connection.")
-
-summarydata.outputdata()
+    outputdict = [dict(deviceIds=qryobj.results)]
+    outfh = open(output_file_base, "w")
+    outfh.write(json.dumps(outputdict, sort_keys=True, indent=4))
+else:
+    ericbase.printerror("Indices not found. Check connection.")
