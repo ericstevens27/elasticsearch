@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # pip install pymongo
 
-from elasticsearch import Elasticsearch
+import elasticsearch
 from optparse import OptionParser
 import datetime
 import sys
@@ -9,8 +9,6 @@ import csv
 import re
 import json
 import ericbase
-import random
-import datetime as dt
 
 # regex searches
 re_datetime = r"\[DEBUG\] (.*?)\||\[INFO\] (.*?)\||\[ERROR\] (.*?)\|"
@@ -78,6 +76,7 @@ search_list = [
 csv_header = [
     "imei",
     "query",
+    "type",
     "datetime",
     "date",
     "time",
@@ -172,24 +171,26 @@ version_header = [
 
 
 class ExtractRe:
-    '''Class for the regex extraction methods'''
+    """Class for the regex extraction methods"""
+
     @staticmethod
     def extractgroup(match):
-        '''extract the second group (index: 1) from the match object'''
+        """extract the second group (index: 1) from the match object"""
         if match is None:
             return None
         return match.group(1)
 
     @staticmethod
     def extractgroups(match):
-        '''extract all of the matching groups from the regex object'''
+        """extract all of the matching groups from the regex object"""
         if match is None:
             return None
         return match.groups()
 
 
 class ProcessData:
-    '''write a list of lists into a csv file'''
+    """write a list of lists into a csv file"""
+
     def __init__(self, fname, h):
         self.outfile = fname
         self.headers = h
@@ -203,6 +204,7 @@ class ProcessData:
             wo.writerow(r)
         sf.close()
         return 0
+
 
 FROM_DATE = "2017-08-01T00:00:01"
 TO_DATE = "2017-09-25T23:59:00"
@@ -228,7 +230,8 @@ MAILBOX_MESSAGES = {
 
 
 class GsQuery:
-    '''all of the query related processing and method'''
+    """all of the query related processing and method"""
+
     def __init__(self):
         self.imei = None
         self.deviceid = None
@@ -240,28 +243,34 @@ class GsQuery:
         self.summary = []
         self.save = False
         self.results = []
+        self.qrymsg = []
+        self.qrytype = ''
 
     def doquery(self):
-        '''main query loop for all device messages and mailbox messages for the device id'''
-        for k, v in DEVICE_MESSAGES.items():
-            self.processquery(v, self.deviceid)
+        """main query loop for all device messages and mailbox messages for the device id"""
+        for self.qrytype, self.qrymsg in DEVICE_MESSAGES.items():
+            self.processquery(self.deviceid)
         if self.mailboxid:
             for mb in self.mailboxid:
-                for k, v in MAILBOX_MESSAGES.items():
-                    self.processquery(v, mb)
+                for self.qrytype, self.qrymsg in MAILBOX_MESSAGES.items():
+                    self.processquery(mb)
 
-    def processquery(self, qrymsg, idtoprocess):
-        '''form and execute the query, then process the results'''
-        self.createquerystring(qrymsg, idtoprocess)
+    def processquery(self, idtoprocess):
+        """form and execute the query, then process the results"""
+        self.createquerystring(self.qrymsg, idtoprocess)
         if options.debug:
             print("Created query string of [{}]".format(self.querystring))
         if len(self.querystring) != 0:
             self.createquery()
             if options.verbose:
-                print("Processing {}".format(self.queryobject["query"]["bool"]["must"][0]["query_string"]['query']))
+                print("Processing {}".format(self.querystring))
             if options.debug:
                 print(self.queryobject)
-            res = es.search(index=iIndexName, body=self.queryobject)
+            res = {}
+            try:
+                res = es.search(index=iIndexName, body=self.queryobject)
+            except elasticsearch.ConnectionTimeout:
+                ericbase.printerror("Connection timed out")
             if options.verbose:
                 print("Found {} records".format(res['hits']['total']))
             for hit in res['hits']['hits']:
@@ -275,7 +284,7 @@ class GsQuery:
                 self.summary.append(self.outcount)
 
     def createquery(self):
-        '''create the query from the string'''
+        """create the query from the string"""
         self.queryobject = esquery_base
         self.queryobject["query"]["bool"]["must"][0]["query_string"]['query'] = self.querystring
         self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = FROM_DATE
@@ -286,13 +295,13 @@ class GsQuery:
                 self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
 
     def createquerystring(self, qry_list: list, useid: str):
-        '''create the correct query string from the list of query items'''
+        """create the correct query string from the list of query items"""
         ql = qry_list + [useid]
         self.querystring = self.quotequery(ql)
 
     @staticmethod
     def quotequery(qs: list):
-        '''surround query items with quotes except for AND and OR'''
+        """surround query items with quotes except for AND and OR"""
         qo = []
         for q in qs:
             if q == 'and':
@@ -304,7 +313,7 @@ class GsQuery:
         return ''.join(qo)
 
     def processversion(self):
-        '''extract and save the version data'''
+        """extract and save the version data"""
         # convert r to dict
         r_dict = ericbase.listtodict(self.results, csv_header)
         if r_dict['miuiversion-1'] or r_dict['miuiversion-2'] or r_dict['ssversion']:
@@ -320,7 +329,7 @@ class GsQuery:
             versiondata.outrecords.append(n_output)
 
     def processresults(self):
-        '''process the results into the summary record'''
+        """process the results into the summary record"""
         # convert self.results to dict
         r_dict = ericbase.listtodict(self.results, csv_header)
         # convert self.summary to dict
@@ -351,8 +360,8 @@ class GsQuery:
         self.summary = n_output
 
     def processmessage(self, logmessage: str):
-        '''process the message using the regex strings to extract the useful data'''
-        self.results = [self.imei, self.querystring]
+        """process the message using the regex strings to extract the useful data"""
+        self.results = [self.imei, self.querystring, self.qrytype]
         # do datetime separate - need to check for which date group was found
         date_list = matching.extractgroups(re.search(re_datetime, logmessage))
         date_touse = ''
@@ -399,6 +408,7 @@ class GsQuery:
                             self.save = True
                             break
 
+
 usagemsg = "This program reads a json file from the current directory and \n\
 uses the device ID to extract all messages for this device and associated Spaces from Elasticsearch. \n\
 Usage is:\n\n\
@@ -440,7 +450,7 @@ iIndexName = "filebeat*"
 if options.test:
     json_files = ["test_devices_list.json"]
     print("[WARNING]: Running in Test Mode")
-elif options .inputfile:
+elif options.inputfile:
     json_files = [options.inputfile]
 else:
     json_files = ["normal_devices_list.json"]
@@ -453,12 +463,13 @@ for f in json_files:
     if options.debug:
         print(data)
 
-    es = Elasticsearch([myESHost], verify_certs=False, timeout=120)
+    es = elasticsearch.Elasticsearch([myESHost], verify_certs=False, timeout=120)
     matching = ExtractRe()
 
     if es.indices.exists(iIndexName):
         if options.verbose:
             print('Index there - execute queries')
+            print("Using date range of {} to {}".format(FROM_DATE, TO_DATE))
 
         for record in data:
             if not record['deviceIds']:
