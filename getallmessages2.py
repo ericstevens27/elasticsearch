@@ -487,50 +487,53 @@ else:
 
 summarydata = ProcessData("summary.csv", summary_header)
 
-for f in json_files:
-    json_fh = open(f, "r")
-    data = json.load(json_fh)
-    if options.debug:
-        print(data)
+def main():
+    for f in json_files:
+        json_fh = open(f, "r")
+        data = json.load(json_fh)
+        if options.debug:
+            print(data)
 
-    es = elasticsearch.Elasticsearch([myESHost], verify_certs=False, timeout=120)
-    matching = ExtractRe()
+        es = elasticsearch.Elasticsearch([myESHost], verify_certs=False, timeout=120)
+        matching = ExtractRe()
 
-    if es.indices.exists(iIndexName):
-        if options.verbose:
-            print('Index there - execute queries')
-            print("Using date range of {} to {}".format(FROM_DATE, TO_DATE))
+        if es.indices.exists(iIndexName):
+            if options.verbose:
+                print('Index there - execute queries')
+                print("Using date range of {} to {}".format(FROM_DATE, TO_DATE))
 
-        for record in data:
-            if not record['deviceIds']:
-                ericbase.printerror("Malformed JSON input file")
-            if options.debug:
+            for record in data:
+                if not record['deviceIds']:
+                    ericbase.printerror("Malformed JSON input file")
+                if options.debug:
+                    for did in record['deviceIds']:
+                        print(did)
+
                 for did in record['deviceIds']:
-                    print(did)
+                    qryobj = GsQuery()
+                    qryobj.imei = matching.extractgroup(re.search(re_imei, did))
+                    qryobj.deviceid = did
+                    output_file = qryobj.imei + output_file_base
+                    versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
+                    csv_output = open(output_file, 'w')
+                    write_output = csv.writer(csv_output)
+                    write_output.writerow(csv_header)
+                    qryobj.incount = 0
+                    qryobj.outcount = 0
+                    qryobj.summary.r['imei'] = qryobj.imei
+                    qryobj.summary.r['fromfile'] =  f
 
-            for did in record['deviceIds']:
-                qryobj = GsQuery()
-                qryobj.imei = matching.extractgroup(re.search(re_imei, did))
-                qryobj.deviceid = did
-                output_file = qryobj.imei + output_file_base
-                versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
-                csv_output = open(output_file, 'w')
-                write_output = csv.writer(csv_output)
-                write_output.writerow(csv_header)
-                qryobj.incount = 0
-                qryobj.outcount = 0
-                qryobj.summary.r['imei'] = qryobj.imei
-                qryobj.summary.r['fromfile'] =  f
+                    qryobj.doquery()
 
-                qryobj.doquery()
+                    csv_output.close()
+                    summarydata.outrecords.append(qryobj.summary.aslist())
+                    versiondata.outputdata()
+                    versiondata.outrecords = []
+                    print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
+                                                                                       qryobj.imei))
+        else:
+            ericbase.printerror("Indices not found. Check connection.")
+    summarydata.outputdata()
 
-                csv_output.close()
-                summarydata.outrecords.append(qryobj.summary.aslist())
-                versiondata.outputdata()
-                versiondata.outrecords = []
-                print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
-                                                                                   qryobj.imei))
-    else:
-        ericbase.printerror("Indices not found. Check connection.")
-
-summarydata.outputdata()
+if __name__ == '__main__':
+    main()

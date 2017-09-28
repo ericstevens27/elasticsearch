@@ -1,5 +1,6 @@
 from unittest import TestCase
-from getallmessages2 import ResultsData
+import getallmessages2
+# from getallmessages2 import ResultsData
 summary_header = [
     "imei",  # 0
     "fromfile",  # 1
@@ -23,15 +24,18 @@ summary_sort = [
 
 
 class TestResultsData(TestCase):
-    test_r = ResultsData(summary_header)
 
     def test_newlist(self):
-        for k, v in self.test_r.r:
-            self.assertEqual(self.test_r.r[k], None)
+        # test_r = ResultsData(summary_header)
+
+        for k, v in test_r.r:
+            self.assertEqual(test_r.r[k], None)
 
     def test_keys(self):
+        # test_r = ResultsData(summary_header)
+
         i = 0
-        for k in sorted(self.test_r.r):
+        for k in sorted(test_r.r):
             self.assertEqual(summary_sort[i], k)
             i += 1
 
@@ -43,3 +47,6 @@ class TestResultsData(TestCase):
 
     def test_addlist(self):
         self.fail()
+
+if __name__ == '__main__':
+    TestResultsData.main()
