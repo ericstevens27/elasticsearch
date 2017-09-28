@@ -9,6 +9,7 @@ import csv
 import re
 import json
 import ericbase
+from typing import List
 
 # regex searches
 re_datetime = r"\[DEBUG\] (.*?)\||\[INFO\] (.*?)\||\[ERROR\] (.*?)\|"
@@ -172,25 +173,27 @@ version_header = [
 
 class ResultsData:
     keys = []
-    def __init__(self, kys):
+
+    def __init__(self, kys: List[str]):
         self.r = {}
         self.keys = kys
         for k in self.keys:
             self.r[k] = None
 
-    def __str__(self):
-        return(self.r)
+    def __str__(self) -> dict:
+        return self.r
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (f'{self.__class__.__name__}('
                 f'{self.r!r})')
 
-    def aslist(self):
+    def aslist(self) -> list:
         return list(self.r.values())
 
     def addlist(self, l: list):
         for i in range(0, len(l)):
             self.r[self.keys[i]] = l[i]
+
 
 class ExtractRe:
     """Class for the regex extraction methods"""
@@ -213,7 +216,7 @@ class ExtractRe:
 class ProcessData:
     """write a list of lists into a csv file"""
 
-    def __init__(self, fname, h):
+    def __init__(self, fname: str, h: List[str]):
         self.outfile = fname
         self.headers = h
         self.outrecords = []
@@ -225,7 +228,6 @@ class ProcessData:
         for r in self.outrecords:
             wo.writerow(r)
         sf.close()
-        return 0
 
 
 FROM_DATE = "2017-08-01T00:00:01"
@@ -261,7 +263,7 @@ class GsQuery:
         self.incount = 0
         self.outcount = 0
         self.querystring = ''
-        self.queryobject = ''
+        self.queryobject = {}
         self.summary = ResultsData(summary_header)
         self.save = False
         self.results = ResultsData(csv_header)
@@ -290,7 +292,7 @@ class GsQuery:
                 print(self.queryobject)
             res = {}
             try:
-                res = es.search(index=iIndexName, body=self.queryobject)
+                res = MyMainData.es.search(index=iIndexName, body=self.queryobject)
             except elasticsearch.ConnectionTimeout:
                 ericbase.printerror("Connection timed out")
             if options.verbose:
@@ -301,20 +303,18 @@ class GsQuery:
                 self.processresults()
                 self.processversion()
                 if self.save:
-                    write_output.writerow(self.results.aslist())
+                    MyMainData.write_output.writerow(self.results.aslist())
                     self.outcount += 1
                 self.summary.r['usefulrecords'] = self.outcount
 
     def createquery(self):
-        """create the query from the string"""
+        """create the query from the string        """
         self.queryobject = esquery_base
         self.queryobject["query"]["bool"]["must"][0]["query_string"]['query'] = self.querystring
         self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'] = FROM_DATE
         self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte'] = TO_DATE
         if options.debug:
-            print("Check query data: Date from is {}, Date to is {}".format(
-                self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['gte'],
-                self.queryobject["query"]["bool"]["must"][1]["range"]['@timestamp']['lte']))
+            print("Check query data: Date from is {}, Date to is {}".format(FROM_DATE, TO_DATE))
 
     def createquerystring(self, qry_list: list, useid: str):
         """create the correct query string from the list of query items"""
@@ -322,7 +322,7 @@ class GsQuery:
         self.querystring = self.quotequery(ql)
 
     @staticmethod
-    def quotequery(qs: list):
+    def quotequery(qs: list) -> str:
         """surround query items with quotes except for AND and OR"""
         qo = []
         for q in qs:
@@ -338,7 +338,8 @@ class GsQuery:
         """extract and save the version data"""
         # convert r to dict
         if self.results.r['miuiversion-1'] or self.results.r['miuiversion-2'] or self.results.r['ssversion']:
-            n = dict(imei=self.results.r['imei'], datetime=self.results.r['datetime'], date=self.results.r['date'], time=self.results.r['time'])
+            n = dict(imei=self.results.r['imei'], datetime=self.results.r['datetime'], date=self.results.r['date'],
+                     time=self.results.r['time'])
             if self.results.r['miuiversion-1']:
                 n['miuiversion'] = self.results.r['miuiversion-1']
             else:
@@ -347,7 +348,7 @@ class GsQuery:
             n_output = []
             for k, v in n.items():
                 n_output.append(v)
-            versiondata.outrecords.append(n_output)
+                MyMainData.versiondata.outrecords.append(n_output)
 
     def processresults(self):
         """process the results into the summary record"""
@@ -389,7 +390,7 @@ class GsQuery:
         """process the message using the regex strings to extract the useful data"""
         thisresult = [self.imei, self.querystring, self.qrytype]
         # do datetime separate - need to check for which date group was found
-        date_list = matching.extractgroups(re.search(re_datetime, logmessage))
+        date_list = MyMainData.matching.extractgroups(re.search(re_datetime, logmessage))
         date_touse = ''
         for dt in date_list:
             if dt is None:
@@ -397,7 +398,7 @@ class GsQuery:
             else:
                 date_touse = dt
         thisresult.append(date_touse)
-        [de, t] = matching.extractgroups(re.search(re_datesplit, date_touse))
+        [de, t] = MyMainData.matching.extractgroups(re.search(re_datesplit, date_touse))
         thisresult.append(de)
         thisresult.append(t)
         if re_subscription in logmessage:
@@ -405,7 +406,7 @@ class GsQuery:
         else:
             thisresult.append(False)
         for re_element in search_list:
-            thisresult.append(matching.extractgroup(re.search(re_element, logmessage)))
+            thisresult.append(MyMainData.matching.extractgroup(re.search(re_element, logmessage)))
         if options.includemessages:
             thisresult.append(logmessage)
         if options.debug:
@@ -482,19 +483,26 @@ elif options.inputfile:
 else:
     json_files = ["normal_devices_list.json"]
 
-summarydata = ProcessData("summary.csv", summary_header)
 
-def main():
+class MyMainData:
+    summarydata = ProcessData("summary.csv", summary_header)
+    es = None
+    matching = None
+    versiondata = None
+    write_output = None
+
+
+def mymain():
     for f in json_files:
         json_fh = open(f, "r")
         data = json.load(json_fh)
         if options.debug:
             print(data)
 
-        es = elasticsearch.Elasticsearch([myESHost], verify_certs=False, timeout=120)
-        matching = ExtractRe()
+        MyMainData.es = elasticsearch.Elasticsearch([myESHost], verify_certs=False, timeout=120)
+        MyMainData.matching = ExtractRe()
 
-        if es.indices.exists(iIndexName):
+        if MyMainData.es.indices.exists(iIndexName):
             if options.verbose:
                 print('Index there - execute queries')
                 print("Using date range of {} to {}".format(FROM_DATE, TO_DATE))
@@ -508,29 +516,31 @@ def main():
 
                 for did in record['deviceIds']:
                     qryobj = GsQuery()
-                    qryobj.imei = matching.extractgroup(re.search(re_imei, did))
+                    qryobj.imei = MyMainData.matching.extractgroup(re.search(re_imei, did))
                     qryobj.deviceid = did
                     output_file = qryobj.imei + output_file_base
-                    versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
+                    MyMainData.versiondata = ProcessData(qryobj.imei + "_version.csv", version_header)
                     csv_output = open(output_file, 'w')
-                    write_output = csv.writer(csv_output)
-                    write_output.writerow(csv_header)
+                    MyMainData.write_output = csv.writer(csv_output)
+                    MyMainData.write_output.writerow(csv_header)
                     qryobj.incount = 0
                     qryobj.outcount = 0
                     qryobj.summary.r['imei'] = qryobj.imei
-                    qryobj.summary.r['fromfile'] =  f
+                    qryobj.summary.r['fromfile'] = f
 
                     qryobj.doquery()
 
                     csv_output.close()
-                    summarydata.outrecords.append(qryobj.summary.aslist())
-                    versiondata.outputdata()
-                    versiondata.outrecords = []
-                    print("{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
-                                                                                       qryobj.imei))
+                    MyMainData.summarydata.outrecords.append(qryobj.summary.aslist())
+                    MyMainData.versiondata.outputdata()
+                    MyMainData.versiondata.outrecords = []
+                    print(
+                        "{}: Processed {} records and wrote {} for IMEI [{}]".format(f, qryobj.incount, qryobj.outcount,
+                                                                                     qryobj.imei))
         else:
             ericbase.printerror("Indices not found. Check connection.")
-    summarydata.outputdata()
+        MyMainData.summarydata.outputdata()
+
 
 if __name__ == '__main__':
-    main()
+    mymain()
