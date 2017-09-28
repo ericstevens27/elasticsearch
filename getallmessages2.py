@@ -186,10 +186,7 @@ class ResultsData:
                 f'{self.r!r})')
 
     def aslist(self):
-        return self.r.items()
-
-    def asdict(self):
-        return self.r
+        return list(self.r.values())
 
     def addlist(self, l: list):
         for i in range(0, len(l)):
